@@ -1,0 +1,38 @@
+# Render Blueprint (render.com → New → Blueprint → pick this repo → Apply). Same setup as JustMafia.
+# Render gives the site HTTPS automatically, which browsers require for camera/microphone.
+#
+# Free plan notes:
+#  - The server sleeps after 15 minutes with no visitors; the next visit takes ~1 minute to wake.
+#  - Without DATABASE_URL, data (profiles, chat history, desks) lives on the instance's disk and is
+#    wiped on every restart/redeploy. For lasting data, create a free Postgres database (e.g. Neon,
+#    neon.tech) and paste its connection string into DATABASE_URL in Render → Environment.
+#  - Find the generated ADMIN_CODE in Render → your service → Environment, then type it on the
+#    join screen ("I have an admin code") to become an admin.
+services:
+  - type: web
+    name: rsp-virtual-office
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_CODE
+        generateValue: true
+      - key: OFFICE_PASSCODE
+        sync: false
+      - key: ALLOWED_EMAIL_DOMAINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false

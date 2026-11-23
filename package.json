@@ -1,0 +1,21 @@
+{
+  "name": "rsp-virtual-office",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "RSP Virtual Office: an 8-bit office where RSP Supply employees walk around and talk with proximity video/audio",
+  "engines": { "node": ">=20" },
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w client",
+    "start": "npm start -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
+    "test": "npm test -w server",
+    "test:e2e": "node tools/e2e.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "playwright-core": "^1.49.0"
+  }
+}
