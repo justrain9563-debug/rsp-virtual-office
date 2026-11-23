@@ -1,13 +1,14 @@
 // Original procedural pixel art for the RSP office: floors, walls and furniture.
 import { MAP, MAP_H, MAP_W, isWall, type Floor, type MapObject } from '@shared/map';
 import { Pix, SCALE, hash, shade, text, textCentered, textWidth } from './pixel';
+import { bakeShadows } from './lighting';
 
 const T = 16; // art pixels per tile
 const NAVY = '#123a6b', ORANGE = '#f26b1d', OUT = '#1b1626';
 
 // ------------------------------------------------------------------ floors & walls
 
-const FLOOR_BASE: Record<Floor, string> = {
+export const FLOOR_BASE: Record<Floor, string> = {
   void: '#0b1220', wood: '#b9824d', woodDark: '#7a4b2c', carpetBlue: '#3d5f8e', carpetTeal: '#2f7472',
   carpetGray: '#8d929b', carpetWine: '#7a3346', carpetGreen: '#4c7a4a', tile: '#efe6d2', concrete: '#9b9a93', marble: '#e7e2d8',
 };
@@ -108,6 +109,7 @@ export function renderBackground(): HTMLCanvasElement {
       }
       p.draw(ctx, tx * T * SCALE, ty * T * SCALE);
     }
+  bakeShadows(ctx);
   return c;
 }
 
@@ -396,13 +398,31 @@ const DRAW: Partial<Record<MapObject['type'], Drawer>> = {
     p.r(0, 3, W, 10, '#64748b'); p.r(2, 4, W / 2 - 3, 8, '#bfe3f5'); p.r(W / 2 + 1, 4, W / 2 - 3, 8, '#bfe3f5');
     p.r(W / 2 - 2, 7, 1, 3, '#e5e7eb'); p.r(W / 2 + 1, 7, 1, 3, '#e5e7eb'); text(p, 'IN', 4, 6, NAVY);
   },
+  door(p, o, W, H, _t, label) {
+    // sliding glass door in a doorway; label 'locked' draws it shut with a red light
+    const frame = '#3a4356', frameL = '#5b6680';
+    p.r(0, 0, 2, H, frame); p.r(W - 2, 0, 2, H, frame); p.r(0, 0, W, 3, frame); p.r(0, 2, W, 1, frameL);
+    if (label === 'locked') {
+      const half = (W - 4) / 2;
+      for (const x0 of [2, 2 + half]) {
+        p.r(x0, 3, half, H - 4, '#9fb8cc'); p.r(x0, 3, half, 1, '#c9dceb'); p.r(x0 + half - 1, 3, 1, H - 4, '#6f879b');
+        for (let i = 0; i < 3; i++) p.set(x0 + 2 + i, 6 + i, '#e3f0fa');
+      }
+      p.r(W / 2 - 1, 7, 2, 4, '#475569');
+      p.r(W / 2 - 2, 4, 4, 2, '#ef4444'); p.set(W / 2 - 1, 4, '#fca5a5');
+    } else {
+      p.r(2, 3, 2, H - 4, '#9fb8cc'); p.r(W - 4, 3, 2, H - 4, '#9fb8cc');
+      p.r(W / 2 - 1, 0, 2, 1, '#22c55e');
+    }
+    p.r(2, H - 1, W - 4, 1, '#2b3243');
+  },
   dock(p, o, W) {
     p.r(0, 2, W, 12, '#6b7280'); for (let y = 3; y < 13; y += 2) p.r(1, y, W - 2, 1, '#9ca3af');
     for (let x = 0; x < W; x += 4) { p.r(x, 13, 2, 3, '#facc15'); p.r(x + 2, 13, 2, 3, '#111'); }
   },
 };
 
-const NO_OUTLINE = new Set(['rug', 'mat', 'floorLine', 'window', 'whiteboard', 'tv', 'clock', 'logo', 'welcome', 'deptSign', 'orderBoard', 'elecPanel', 'glassDoor', 'dock']);
+const NO_OUTLINE = new Set(['door', 'rug', 'mat', 'floorLine', 'window', 'whiteboard', 'tv', 'clock', 'logo', 'welcome', 'deptSign', 'orderBoard', 'elecPanel', 'glassDoor', 'dock']);
 
 export function objectSize(o: MapObject) {
   return { W: o.w * T, H: Math.ceil((o.h + o.tall) * T) };

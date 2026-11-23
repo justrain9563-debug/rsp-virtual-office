@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Hash, MessageSquare, Send, SmilePlus, X } from 'lucide-react';
+import { Hash, MessageSquare, Radio, Send, SmilePlus, X } from 'lucide-react';
 import { DEPTS, REACTIONS, type ChatMessage } from '@shared/types';
 import { request, send } from '../net/socket';
 import { useStore } from '../store';
@@ -8,6 +8,7 @@ const loaded = new Set<string>();
 
 export function channelTitle(ch: string, names: Record<string, string>, selfId: string | null) {
   if (ch === 'general') return 'General';
+  if (ch === 'nearby') return 'Nearby';
   if (ch.startsWith('dept:')) return DEPTS.find((d) => d.id === ch.slice(5))?.label ?? ch;
   const other = ch.slice(3).split(':').find((id) => id !== selfId) ?? '';
   return names[other] ?? 'Direct message';
@@ -27,7 +28,7 @@ export function ChatPanel() {
   const [pickerFor, setPickerFor] = useState<number | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const channels = ['general', ...(me?.role === 'member' ? [`dept:${me.dept}`] : DEPTS.map((d) => `dept:${d.id}`))];
+  const channels = ['nearby', 'general', ...(me?.role === 'member' ? [`dept:${me.dept}`] : DEPTS.map((d) => `dept:${d.id}`))];
 
   useEffect(() => {
     fetch('/api/users').then((r) => r.json()).then((list) => setNames(Object.fromEntries(list.map((u: any) => [u.id, u.name])))).catch(() => {});
@@ -35,7 +36,7 @@ export function ChatPanel() {
   const allNames = { ...names, ...Object.fromEntries(Object.values(players).map((p) => [p.id, p.name])) };
 
   useEffect(() => {
-    if (!loaded.has(active)) {
+    if (!loaded.has(active) && active !== 'nearby') {
       loaded.add(active);
       request<ChatMessage[]>('chat:history', { channel: active }).then((hist) => {
         useStore.setState((s) => {
@@ -54,6 +55,7 @@ export function ChatPanel() {
     e.preventDefault();
     const body = text.trim();
     if (!body) return;
+    if (active === 'nearby') { send('chat:nearby', { body }); setText(''); return; }
     send('chat:send', { channel: active, body }, (r: any) => { if (!r?.ok && r?.error) useStore.getState().toast({ kind: 'warn', text: r.error }); });
     setText('');
   };
@@ -69,15 +71,15 @@ export function ChatPanel() {
   return (
     <aside className="flex w-[22rem] shrink-0 flex-col border-l border-white/10 bg-brand-900/95" data-testid="chat">
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-        <h2 className="text-sm font-bold text-white">Chat</h2>
+        <h2 className="font-display text-base font-semibold tracking-wide text-white">Chat</h2>
         <button className="text-slate-500 hover:text-white" onClick={() => set({ rightTab: null })}><X size={16} /></button>
       </div>
       <div className="max-h-44 shrink-0 space-y-0.5 overflow-y-auto border-b border-white/10 p-2 scroll-thin">
-        {channels.map((ch) => <ChannelBtn key={ch} ch={ch} icon={<Hash size={14} className="text-slate-500" />} />)}
+        {channels.map((ch) => <ChannelBtn key={ch} ch={ch} icon={ch === 'nearby' ? <Radio size={14} className="text-emerald-400" /> : <Hash size={14} className="text-slate-500" />} />)}
         {dms.map((ch) => <ChannelBtn key={ch} ch={ch} icon={<MessageSquare size={14} className="text-slate-500" />} />)}
       </div>
       <div className="scroll-thin min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-        {messages.length === 0 && <div className="py-8 text-center text-sm text-slate-500">No messages yet. Say hi! 👋</div>}
+        {messages.length === 0 && <div className="py-8 text-center text-sm text-slate-500">{active === 'nearby' ? 'Messages here go to people near you (or in your room) and are not saved.' : 'No messages yet. Say hi! 👋'}</div>}
         {messages.map((m, i) => {
           const grouped = i > 0 && messages[i - 1].senderId === m.senderId && new Date(m.createdAt).getTime() - new Date(messages[i - 1].createdAt).getTime() < 5 * 60_000;
           return (

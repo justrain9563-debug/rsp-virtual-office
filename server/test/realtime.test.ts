@@ -168,6 +168,97 @@ async function main() {
   const hist2 = await new Promise<any[]>((res) => B.s.emit('chat:history', { channel: 'general' }, res));
   ok(hist2.some((x) => x.body === 'Hello office!'), 'general history persisted');
 
+  console.log('emotes + raised hand + custom status');
+  const gotEmote = new Promise<any>((res) => A.s.once('emote', res));
+  C.s.emit('emote', 'wave');
+  ok((await Promise.race([gotEmote, sleep(1000).then(() => null)]))?.id === C.id, 'emote broadcast to everyone');
+  C.s.emit('emote', 'hand');
+  C.s.emit('status:text', '  Quoting   the Acme order ');
+  await sleep(300);
+  ok(A.events.some(([e, p]) => e === 'player:update' && p.id === C.id && p.hand === true), 'raised hand is shared');
+  ok(A.events.some(([e, p]) => e === 'player:update' && p.id === C.id && p.statusText === 'Quoting the Acme order'), 'custom status text is cleaned and shared');
+
+  console.log('knock on a locked room');
+  A.s.emit('room:lock', { roomId: 'conf', locked: true });
+  await sleep(200);
+  const knock = new Promise<any>((res) => A.s.once('request', res));
+  C.s.emit('room:knock', { roomId: 'conf' });
+  const kr = await Promise.race([knock, sleep(1000).then(() => null)]);
+  ok(kr?.kind === 'knock' && kr?.from === C.id, 'people inside hear the knock');
+  C.corrected = false;
+  A.s.emit('request:answer', { id: kr?.id, accept: true });
+  await sleep(500);
+  ok(C.corrected && linked(C, A) === 'room', '"Let them in" brings the knocker inside the locked room');
+  A.s.emit('room:lock', { roomId: 'conf', locked: false });
+
+  console.log('nearby chat');
+  const D = await connect('Dana');
+  const nearbyA = new Promise<any>((res) => A.s.on('chat:message', (x: any) => { if (x.channel === 'nearby') res(x); }));
+  let dSaw = false;
+  D.s.on('chat:message', (x: any) => { if (x.channel === 'nearby') dSaw = true; });
+  C.s.emit('chat:nearby', { body: 'room only' });
+  ok((await Promise.race([nearbyA, sleep(1000).then(() => null)]))?.body === 'room only', 'nearby chat reaches people in the same room');
+  await sleep(200);
+  ok(!dSaw, 'nearby chat does not reach someone elsewhere');
+
+  console.log('ring + teleport');
+  const ring = new Promise<any>((res) => A.s.once('request', res));
+  D.s.emit('request', { to: A.id, kind: 'ring' });
+  const rr = await Promise.race([ring, sleep(1000).then(() => null)]);
+  ok(rr?.kind === 'ring' && rr?.from === D.id, 'ring reaches the person');
+  D.corrected = false;
+  A.s.emit('request:answer', { id: rr?.id, accept: true });
+  await sleep(500);
+  ok(D.corrected && linked(D, A) === 'room', 'accepting a ring brings the caller next to you');
+  const E = await connect('Eli');
+  E.corrected = false;
+  E.s.emit('teleport', { to: D.id });
+  await sleep(500);
+  ok(E.corrected && linked(E, D) === 'room', '"Go to" teleports next to a person (into their unlocked room)');
+
+  console.log('locked conversation');
+  const F = await connect('Fay');
+  const G = await connect('Gus');
+  await walkTo(F, 5, 15);
+  await walkTo(G, 6, 15);
+  ok(linked(F, G) === 'proximity', 'two people chatting in the hallway');
+  F.s.emit('convo:lock', true);
+  await sleep(300);
+  const H = await connect('Hal');
+  await walkTo(H, 7, 15);
+  ok(!linked(H, F) && !linked(H, G), 'locked conversation: a passer-by cannot join');
+  ok(linked(F, G) === 'proximity', 'locked conversation: members still talk');
+  F.s.emit('convo:lock', false);
+  await sleep(400);
+  ok(linked(H, F) === 'proximity', 'unlocked: the passer-by joins');
+
+  console.log('spotlight');
+  H.s.emit('spotlight', true);
+  await sleep(300);
+  ok(H.events.some(([e, t]) => e === 'toast' && /managers and admins/.test(t.text)), 'members cannot broadcast');
+  const Boss = await connect('Boss', { adminCode: 'letmein' });
+  Boss.s.emit('spotlight', true);
+  await sleep(400);
+  ok(linked(D, Boss) === 'spotlight' && linked(Boss, D) === 'audience', 'admin broadcast reaches people inside rooms (one-way)');
+  ok(linked(F, Boss) !== null, 'admin broadcast reaches people in open areas');
+  Boss.s.emit('spotlight', false);
+  await sleep(400);
+  ok(!linked(D, Boss), 'stopping the broadcast drops the links');
+
+  console.log('build mode (layout)');
+  const save = (c: Client, m: any) => new Promise<any>((res) => c.s.emit('layout:save', m, res));
+  const layout0 = Boss.events.find(([e]) => e === 'init')?.[1]?.layout;
+  ok(layout0?.v === 1 && layout0.tiles.length === 38, 'clients receive the office layout on connect');
+  ok(!(await save(H, { layout: layout0 })).ok, 'members cannot change the layout');
+  ok(!(await save(Boss, { layout: { ...layout0, tiles: ['bad'] } })).ok, 'malformed layouts are rejected');
+  const edited = { ...layout0, objects: [...layout0.objects, { id: 'plant-test', type: 'plant', x: 10, y: 15, w: 1, h: 1, variant: 0, ox: 0 }] };
+  const gotLayout = new Promise<any>((res) => A.s.once('layout', res));
+  ok((await save(Boss, { layout: edited })).ok, 'admin can save a new layout');
+  const lay = await Promise.race([gotLayout, sleep(1000).then(() => null)]);
+  ok(lay?.layout.objects.some((o: any) => o.id === 'plant-test'), 'everyone receives the new layout');
+  ok((await save(Boss, { reset: true })).ok, 'admin can reset to the default layout');
+  for (const c of [D, E, F, G, H, Boss]) c.s.disconnect();
+
   console.log('reconnect');
   B.s.disconnect();
   await sleep(500);

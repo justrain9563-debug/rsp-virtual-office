@@ -12,7 +12,8 @@
     "start": "npm start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
     "test": "npm test -w server",
-    "test:e2e": "node tools/e2e.mjs"
+    "test:e2e": "node tools/e2e.mjs",
+    "shots": "node tools/screenshots.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

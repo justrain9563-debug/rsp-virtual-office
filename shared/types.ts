@@ -86,6 +86,14 @@ export interface PlayerState {
   cam: boolean;
   screen: boolean;
   zone: string | null;
+  /** short custom status ("Back at 2", "Quoting the Acme order") */
+  statusText: string;
+  /** raised hand (shown over the avatar and on the video tile) */
+  hand: boolean;
+  /** id of a locked conversation bubble this person is in, or null */
+  bubble: string | null;
+  /** broadcasting to the whole office */
+  spotlight: boolean;
 }
 
 export interface ProximityConfig {
@@ -130,7 +138,8 @@ export interface ChatMessage {
   reactions: Record<string, string[]>; // emoji -> user ids
 }
 
-export type PeerMode = 'proximity' | 'room';
+/** proximity / room: two-way. spotlight: I listen to a broadcaster. audience: I am the broadcaster, they listen. */
+export type PeerMode = 'proximity' | 'room' | 'spotlight' | 'audience';
 export interface PeerLink {
   id: string;
   mode: PeerMode;
@@ -151,3 +160,28 @@ export interface MeUser {
 
 export const dmChannel = (a: string, b: string) => 'dm:' + [a, b].sort().join(':');
 export const REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
+
+/** Emotes shown over the avatar (keys 1-6, Z to dance). 'hand' toggles a raised hand. */
+export const EMOTES = [
+  { id: 'wave', emoji: '👋', key: '1', label: 'Wave' },
+  { id: 'heart', emoji: '❤️', key: '2', label: 'Heart' },
+  { id: 'party', emoji: '🎉', key: '3', label: 'Celebrate' },
+  { id: 'thumbs', emoji: '👍', key: '4', label: 'Thumbs up' },
+  { id: 'laugh', emoji: '😂', key: '5', label: 'Laugh' },
+  { id: 'hand', emoji: '✋', key: '6', label: 'Raise hand' },
+  { id: 'dance', emoji: '🕺', key: 'Z', label: 'Dance' },
+  { id: 'coffee', emoji: '☕', key: '', label: 'Coffee' },
+  { id: 'snack', emoji: '🍫', key: '', label: 'Snack' },
+  { id: 'water', emoji: '💧', key: '', label: 'Water' },
+] as const;
+export type EmoteId = (typeof EMOTES)[number]['id'];
+
+/** Map objects you can walk up to and press X on. */
+export const INTERACTIVE = ['whiteboard', 'tv', 'orderBoard', 'kiosk', 'coffee', 'waterCooler', 'vending', 'clock', 'bookshelf'] as const;
+export type InteractiveType = (typeof INTERACTIVE)[number];
+
+export interface Stroke { c: string; w: number; pts: number[] } // pts: x,y pairs normalised 0..1
+export interface StickyNote { id: string; text: string; color: string; by: string; at: string }
+
+/** Requests between two people. ring: "can I come talk?" (accept = they come to you). invite: "come join me" (accept = you go to them). */
+export type RequestKind = 'ring' | 'invite';

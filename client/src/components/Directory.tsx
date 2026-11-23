@@ -1,8 +1,8 @@
+import { ActionGrid } from './PlayerCard';
 import { useEffect, useMemo, useState } from 'react';
-import { Footprints, Hand, LocateFixed, MessageSquare, Search, X } from 'lucide-react';
+import { MessageSquare, Search, X } from 'lucide-react';
 import { deptLabel, dmChannel, statusInfo, type AvatarConfig, type Status } from '@shared/types';
 import { api } from '../api';
-import { send } from '../net/socket';
 import { useStore } from '../store';
 import { AvatarCanvas } from './AvatarEditor';
 import { StatusDot, zoneName } from './TopBar';
@@ -36,7 +36,7 @@ export function Directory() {
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r border-white/10 bg-brand-900/95" data-testid="directory">
       <div className="flex items-center justify-between px-4 pb-2 pt-3">
-        <h2 className="text-sm font-bold text-white">Employee directory</h2>
+        <h2 className="font-display text-base font-semibold tracking-wide text-white">Employee directory</h2>
         <button className="text-slate-500 hover:text-white" onClick={() => set({ leftOpen: false })} title="Hide"><X size={16} /></button>
       </div>
       <div className="relative px-3 pb-2">
@@ -53,22 +53,16 @@ export function Directory() {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 truncate text-sm font-semibold text-white">
-                  <StatusDot status={p.status} /> <span className="truncate">{p.name}{p.id === selfId && <span className="font-normal text-slate-400"> (you)</span>}</span>
+                  <StatusDot status={p.status} /> <span className="truncate">{p.name}{p.id === selfId && <span className="font-normal text-slate-400"> (you)</span>}</span>{p.hand && <span title="Hand raised">✋</span>}{p.spotlight && <span title="Broadcasting">📢</span>}
                 </div>
-                <div className="truncate text-xs text-slate-400">{peers[p.id] ? <span className="text-accent-300">● Talking with you</span> : `${zoneName(p.zone)}`}</div>
+                <div className="truncate text-xs text-slate-400">{peers[p.id] && peers[p.id].mode !== 'audience' ? <span className="text-accent-300">● Talking with you</span> : p.statusText ? `${p.statusText}` : `${zoneName(p.zone)}`}</div>
               </div>
             </button>
             {selected === p.id && (
               <div className="space-y-2 px-3 pb-3">
                 <div className="text-xs text-slate-400">{[p.title, deptLabel(p.dept)].filter(Boolean).join(' · ')} · {statusInfo(p.status).label}</div>
-                {p.id !== selfId && (
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button className="btn-ghost px-2 py-1.5 text-xs" onClick={() => set({ locate: { id: p.id, t: Date.now() } })}><LocateFixed size={13} /> Locate</button>
-                    <button className="btn-ghost px-2 py-1.5 text-xs" onClick={() => set({ walkTo: { id: p.id, t: Date.now() } })}><Footprints size={13} /> Walk to</button>
-                    <button className="btn-ghost px-2 py-1.5 text-xs" onClick={() => send('wave', { to: p.id })}><Hand size={13} /> Wave</button>
-                    <button className="btn-ghost px-2 py-1.5 text-xs" onClick={() => openDm(p.id)}><MessageSquare size={13} /> Message</button>
-                  </div>
-                )}
+                {p.statusText && <div className="text-xs italic text-slate-300">“{p.statusText}”</div>}
+                {p.id !== selfId && <ActionGrid id={p.id} compact />}
               </div>
             )}
           </div>

@@ -204,7 +204,7 @@ class MediaManager {
     for (const id of [...this.peers.keys()]) if (!want.has(id)) this.closePeer(id);
     for (const [id, mode] of want) {
       const p = this.peers.get(id);
-      if (p) { p.mode = mode; this.st.setPeer(id, { mode }); }
+      if (p) { const changed = p.mode !== mode; p.mode = mode; this.st.setPeer(id, { mode }); if (changed) this.attach(p); }
       else this.createPeer(id, mode);
     }
   }
@@ -329,9 +329,11 @@ class MediaManager {
   private attach(peer: Peer) {
     const trs = peer.pc.getTransceivers();
     if (trs.length < 3) return;
-    trs[0].sender.replaceTrack(this.micTrack).catch(() => {});
-    trs[1].sender.replaceTrack(this.camTrack).catch(() => {});
-    trs[2].sender.replaceTrack(this.screenTrack).catch(() => {});
+    // spotlight: we only listen to the broadcaster, so we send them nothing
+    const listen = peer.mode === 'spotlight';
+    trs[0].sender.replaceTrack(listen ? null : this.micTrack).catch(() => {});
+    trs[1].sender.replaceTrack(listen ? null : this.camTrack).catch(() => {});
+    trs[2].sender.replaceTrack(listen ? null : this.screenTrack).catch(() => {});
   }
 
   private attachAll() {
@@ -374,7 +376,8 @@ class MediaManager {
     for (const p of this.peers.values()) {
       const other = positions.get(p.id);
       let target = 0;
-      if (p.mode === 'room') target = 1;
+      if (p.mode === 'room' || p.mode === 'spotlight') target = 1;
+      else if (p.mode === 'audience') target = 0;
       else if (self && other && cfg) target = volumeForDistance(tileDistance(self, other), cfg);
       p.gain += (target - p.gain) * 0.35;
       if (Math.abs(target - p.gain) < 0.01) p.gain = target;

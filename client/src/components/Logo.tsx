@@ -10,7 +10,7 @@ export function Logo({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
         <path d="M9 4h4v2h-2v1h2v5H9v-2h2V9H9z" fill="#f26b1d" />
       </svg>
       <div className="leading-tight">
-        <div className={`font-extrabold tracking-wide text-white ${big ? 'text-2xl' : 'text-sm'}`}>RSP SUPPLY</div>
+        <div className={`font-display font-bold tracking-wider text-white ${big ? 'text-2xl' : 'text-sm'}`}>RSP SUPPLY</div>
         <div className={`font-medium text-accent-400 ${big ? 'text-sm' : 'text-[11px]'}`}>Virtual Office</div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { Maximize2, MicOff, Minimize2, MonitorUp, Volume2 } from 'lucide-react';
+import { Lock, LockOpen, Maximize2, MicOff, Minimize2, MonitorUp, Volume2 } from 'lucide-react';
+import { send } from '../net/socket';
 import type { AvatarConfig } from '@shared/types';
 import { useStore, type RemotePeer } from '../store';
 import { AvatarCanvas } from './AvatarEditor';
@@ -16,8 +17,8 @@ function Video({ stream, mirror = false, contain = false }: { stream: MediaStrea
 
 const STATE_COLOR: Record<string, string> = { connected: 'bg-emerald-400', connecting: 'bg-amber-400', new: 'bg-amber-400', disconnected: 'bg-orange-500', failed: 'bg-red-500', closed: 'bg-slate-500' };
 
-function Tile({ name, avatar, stream, mic, speaking, peer, self, big }: {
-  name: string; avatar?: AvatarConfig; stream: MediaStream | null; mic: boolean; speaking: boolean; peer?: RemotePeer; self?: boolean; big?: boolean;
+function Tile({ name, avatar, stream, mic, speaking, peer, self, big, hand }: {
+  name: string; avatar?: AvatarConfig; stream: MediaStream | null; mic: boolean; speaking: boolean; peer?: RemotePeer; self?: boolean; big?: boolean; hand?: boolean;
 }) {
   const fade = peer && peer.mode === 'proximity' ? 0.45 + 0.55 * peer.volume : 1;
   return (
@@ -31,7 +32,7 @@ function Tile({ name, avatar, stream, mic, speaking, peer, self, big }: {
       )}
       <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-black/75 to-transparent px-2 pb-1.5 pt-4 text-xs font-semibold text-white">
         {peer && <span className={`h-2 w-2 rounded-full ${STATE_COLOR[peer.state] ?? 'bg-slate-400'}`} title={`Connection: ${peer.state}`} />}
-        <span className="truncate">{name}{self && ' (you)'}</span>
+        <span className="truncate">{peer?.mode === 'spotlight' && '📢 '}{name}{self && ' (you)'}{hand && ' ✋'}</span>
         <span className="flex-1" />
         {!mic && <MicOff size={13} className="text-red-400" />}
         {peer && peer.mode === 'proximity' && mic && (
@@ -54,17 +55,18 @@ export function VideoDock() {
   const set = useStore((s) => s.set);
   const me = selfId ? players[selfId] : null;
 
-  const list = Object.values(peers).filter((p) => players[p.id]);
+  const list = Object.values(peers).filter((p) => players[p.id] && p.mode !== 'audience');
+  const proximity = list.some((p) => p.mode === 'proximity');
   if (!list.length && !localCam) return null;
   const inRoom = me?.zone?.startsWith('room:');
   const screens = list.filter((p) => players[p.id]?.screen && p.screen);
 
   const tiles = (big: boolean) => (
     <>
-      <Tile self big={big} name={me?.name ?? 'You'} avatar={me?.avatar} stream={localCam} mic={mic} speaking={localSpeaking} />
+      <Tile self big={big} name={me?.name ?? 'You'} avatar={me?.avatar} stream={localCam} mic={mic} speaking={localSpeaking} hand={me?.hand} />
       {list.map((p) => {
         const pl = players[p.id];
-        return <Tile key={p.id} big={big} name={pl.name} avatar={pl.avatar} stream={pl.cam ? p.cam : null} mic={pl.mic} speaking={p.speaking} peer={p} />;
+        return <Tile key={p.id} big={big} name={pl.name} avatar={pl.avatar} stream={pl.cam ? p.cam : null} mic={pl.mic} speaking={p.speaking} peer={p} hand={pl.hand} />;
       })}
     </>
   );
@@ -73,7 +75,7 @@ export function VideoDock() {
     return (
       <div className="absolute inset-0 z-30 flex flex-col bg-brand-950/80 p-4 backdrop-blur-sm">
         <div className="mb-3 flex items-center gap-3">
-          <h3 className="font-bold text-white">{inRoom ? zoneName(me?.zone) : 'Nearby conversation'}</h3>
+          <h3 className="font-display font-semibold tracking-wide text-white">{inRoom ? zoneName(me?.zone) : 'Nearby conversation'}</h3>
           <span className="text-sm text-slate-400">{list.length + 1} people</span>
           <span className="flex-1" />
           <button className="btn-ghost" onClick={() => set({ expanded: false })}><Minimize2 size={16} /> Back to office</button>
@@ -97,6 +99,12 @@ export function VideoDock() {
         {tiles(false)}
         <div className="flex flex-col gap-1">
           <button className="btn-ghost h-9 w-9 p-0" title="Expand meeting view" onClick={() => set({ expanded: true })}><Maximize2 size={16} /></button>
+          {proximity && !inRoom && (
+            <button className={`h-9 w-9 p-0 ${me?.bubble ? 'btn-primary' : 'btn-ghost'}`} data-testid="btn-convo-lock"
+              title={me?.bubble ? 'Unlock conversation' : 'Lock conversation: people walking by cannot join'} onClick={() => send('convo:lock', !me?.bubble)}>
+              {me?.bubble ? <Lock size={16} /> : <LockOpen size={16} />}
+            </button>
+          )}
         </div>
       </div>
       {screens.length > 0 && (

@@ -21,6 +21,11 @@ An optional passcode keeps strangers out.
 | Walls block conversations; Do Not Disturb blocks auto-conversations | ✅ | automated (server test) |
 | Private rooms: everyone inside connected, outsiders not; room lock; capacity | ✅ | automated |
 | Mute, camera off, screen share | ✅ | automated (browser) |
+| Gather-style extras: emotes (1-6), raise hand, dance (Z), click a person → walk to / go to (teleport) / follow / ring / invite / wave / message, knock on locked rooms, locked conversations, spotlight broadcast (managers+), nearby chat, custom status text, auto-away, mini-map (M), sitting on chairs, 8-bit sound effects | ✅ | automated (server test) + visual |
+| Interactive objects (X): shared live whiteboards, TVs showing a website/YouTube, sticky-note boards (orders board, bookshelf), directory kiosk, coffee/water/snacks | ✅ | partly automated + visual |
+| Doors on meeting rooms: close and turn red when the room is locked | ✅ | visual |
+| **Build mode** (admins): place/remove furniture and wall items, paint floors and walls, cut doors, draw new rooms/areas (private or open), rename/remove areas, undo, save for everyone, reset to the original office | ✅ | automated save/validate + visual |
+| Modern-pixel graphics: dynamic lighting (bright all day; time of day only changes warmth), sunbeams, soft shadows, glow, particles, bloom/vignette; Settings → Graphics for a performance mode | ✅ | visual (`npm run shots`) |
 | Avatar customisation (skin, hair style/colour, shirt, pants, shoes, 8 accessories), 4-direction walk animation | ✅ | visual |
 | Statuses, auto "In a Meeting" in rooms, directory with locate / walk to / wave / message | ✅ | partly automated |
 | Chat: General, department channels, DMs, history, emoji reactions, unread badges, desktop notifications | ✅ | automated (server test) |
@@ -30,6 +35,7 @@ An optional passcode keeps strangers out.
 | Reconnect: 10 s grace period, calls rebuilt automatically, ICE restart on network change | ✅ | partly automated |
 | Test across **different networks** | ⚠️ | **not yet tested**: needs the deployed site and two people (see below). Some corporate networks need a TURN server. |
 | LiveKit / SFU for large groups | ❌ | Not built. Uses peer-to-peer mesh, fine for conversations up to ~8 people. |
+| Calendar integration (Google/Outlook meetings on rooms), camera background blur, multiple floors/maps with portals, uploading custom images into the map | ❌ | Not built yet (see docs/PROGRESS.md). |
 | Microsoft Entra ID SSO, email verification | ❌ | Not built. Names are self-entered; use `OFFICE_PASSCODE` and/or `ALLOWED_EMAIL_DOMAINS`. |
 
 Not production-hardened: there is no email verification, so a person can type any name. Treat it as an internal tool behind a passcode.
@@ -83,6 +89,8 @@ Automated:
 npm test                          # server: proximity, walls, DND, rooms, locks, signaling auth, chat, reconnect
 npm run build && npm run test:e2e # two real Edge browsers with fake cameras/mics run the 16-step checklist
 ```
+
+`npm run build && npm run shots` saves day/night screenshots of each area to `.qa/look-*.png`; add `?time=night` to the URL to preview another time of day.
 
 `test:e2e` drives Microsoft Edge (`BROWSER=chrome` for Chrome, `HEADED=1` to watch) and saves screenshots to `.qa/`.
 `BASE_URL=https://your-site.onrender.com npm run test:e2e` runs it against the deployed site.

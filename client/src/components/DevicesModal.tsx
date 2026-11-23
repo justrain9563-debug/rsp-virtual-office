@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell } from 'lucide-react';
+import { Bell, Sparkles } from 'lucide-react';
+import { getQuality, setQuality, type Quality } from '../game/lighting';
+import { setSfxEnabled, sfx, sfxEnabled } from '../sfx';
 import { media } from '../media/MediaManager';
 import { askNotificationPermission } from '../notify';
 import { useStore } from '../store';
@@ -12,6 +14,9 @@ export function DevicesModal() {
   const localSpeaking = useStore((s) => s.localSpeaking);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [chosen, setChosen] = useState({ ...media.devices });
+  const [gfx, setGfx] = useState<Quality>(getQuality());
+  const [sounds, setSounds] = useState(sfxEnabled());
+  const chooseGfx = (q: Quality) => { if (q === gfx) return; setQuality(q); setGfx(q); window.dispatchEvent(new Event('rsp:gfx')); };
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const refresh = () => media.listDevices().then(setDevices);
@@ -49,6 +54,20 @@ export function DevicesModal() {
             <div className="h-2 overflow-hidden rounded bg-white/10"><div className={`h-full bg-emerald-400 transition-all ${localSpeaking ? 'w-3/4' : mic ? 'w-[6%]' : 'w-0'}`} /></div>
           </div>
           <button className="btn-ghost w-full" onClick={askNotificationPermission}><Bell size={14} /> Enable desktop notifications</button>
+          <div>
+            <span className="label flex items-center gap-1"><Sparkles size={12} /> Graphics</span>
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-white/5 p-1" data-testid="gfx">
+              {(['high', 'low'] as Quality[]).map((q) => (
+                <button key={q} onClick={() => chooseGfx(q)} className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${gfx === q ? 'bg-accent-500 text-white' : 'text-slate-300 hover:bg-white/10'}`}>
+                  {q === 'high' ? 'Full effects' : 'Performance'}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">Performance turns off bloom, particles and flicker for older laptops.</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={sounds} onChange={(e) => { setSfxEnabled(e.target.checked); setSounds(e.target.checked); if (e.target.checked) sfx.join(); }} /> 8-bit sound effects (joins, rings, knocks, messages)
+          </label>
         </div>
         <div>
           <span className="label">Camera preview</span>

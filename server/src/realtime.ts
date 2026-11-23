@@ -2,14 +2,16 @@
 // proximity conversation groups, WebRTC signaling relay, chat, waves, rooms, desks.
 import type { Server as HttpServer } from 'node:http';
 import { Server, type Socket } from 'socket.io';
-import { MAP, TILE, isSolid, spawnPoint, tileOf, zoneById } from '../../shared/map';
+import { DEFAULT_LAYOUT, MAP, TILE, applyLayout, exportLayout, isSolid, spawnPoint, tileOf, validateLayout, zoneById, type Layout } from '../../shared/map';
+import { flushObjects, registerObjects } from './objects';
 import { evaluatePair, tileDistance, zoneKeyAt } from '../../shared/proximity';
 import {
-  DEPTS, REACTIONS, STATUSES, type ChatMessage, type DeskInfo, type Dir, type PeerMode, type PlayerState, type Status,
+  DEPTS, EMOTES, REACTIONS, STATUSES, type ChatMessage, type DeskInfo, type Dir, type PeerMode, type PlayerState, type RequestKind, type Status,
 } from '../../shared/types';
 import { rateLimited, uidFromCookieHeader } from './auth';
 import { db } from './db';
-import { getUser, rooms, settings } from './state';
+import { setSetting } from './db';
+import { ensureRooms, getUser, rooms, settings } from './state';
 
 interface Conn {
   uid: string;
@@ -22,7 +24,13 @@ interface Conn {
   goneTimer: NodeJS.Timeout | null;
 }
 
+interface PendingRequest { id: string; from: string; to: string; kind: RequestKind | 'knock'; roomId?: string; expires: number }
+
 const conns = new Map<string, Conn>();
+const requests = new Map<string, PendingRequest>();
+const bubbles = new Map<string, Set<string>>();
+let reqSeq = 1;
+const MAX_AUDIENCE = 60;
 let desks: Record<string, DeskInfo> = {};
 let io: Server;
 
@@ -37,19 +45,88 @@ function toPlayer(row: any, x: number, y: number): PlayerState {
   return {
     id: row.id, name: row.name, title: row.title, dept: row.dept, role: row.role, avatar: row.avatar,
     x, y, dir: 'down', moving: false, status: row.status, mic: false, cam: false, screen: false, zone: zoneKeyAt(x, y),
+    statusText: row.status_text ?? '', hand: false, bubble: null, spotlight: false,
   };
 }
 
 async function loadDesks() {
   const r = await db.query('SELECT id, name, desk_id FROM users WHERE desk_id IS NOT NULL AND banned=false');
   desks = {};
-  for (const row of r.rows) desks[row.desk_id] = { userId: row.id, name: row.name };
+  for (const row of r.rows) if (MAP.desks.some((d) => d.id === row.desk_id)) desks[row.desk_id] = { userId: row.id, name: row.name };
 }
 
 function broadcastUpdate(c: Conn, fields: (keyof PlayerState)[]) {
   const patch: any = { id: c.uid };
   for (const f of fields) patch[f] = c.p[f];
   io.to('all').emit('player:update', patch);
+}
+
+// ------------------------------------------------------------------ teleport, bubbles, layout
+
+/** Move `c` to a free tile next to `target`, in the same area. Returns false if there is no space or it is locked. */
+function teleportNear(c: Conn, target: Conn, bypassLock = false): boolean {
+  const tz = target.p.zone;
+  const roomId = roomIdOfZone(tz);
+  if (roomId && roomIdOfZone(c.p.zone) !== roomId) {
+    const room = rooms.get(roomId);
+    if (room?.locked && !bypassLock && c.p.role !== 'admin') { c.socket?.emit('toast', { kind: 'warn', text: `${target.p.name} is in a locked room. Knock to ask to come in.` }); return false; }
+    if (room && occupancy(roomId) >= room.capacity) { c.socket?.emit('toast', { kind: 'warn', text: `${zoneById(roomId)?.name} is full.` }); return false; }
+  }
+  const tx0 = tileOf(target.p.x), ty0 = tileOf(target.p.y);
+  const taken = new Set([...conns.values()].filter((o) => o !== c).map((o) => `${tileOf(o.p.x)},${tileOf(o.p.y)}`));
+  for (let r = 1; r <= 6; r++)
+    for (let j = -r; j <= r; j++)
+      for (let i = -r; i <= r; i++) {
+        if (Math.max(Math.abs(i), Math.abs(j)) !== r) continue;
+        const tx = tx0 + i, ty = ty0 + j;
+        const x = tx * TILE + TILE / 2, y = ty * TILE + TILE / 2;
+        if (isSolid(tx, ty) || taken.has(`${tx},${ty}`) || zoneKeyAt(x, y) !== tz) continue;
+        moveTo(c, x, y);
+        return true;
+      }
+  c.socket?.emit('toast', { kind: 'warn', text: `There's no space next to ${target.p.name} right now.` });
+  return false;
+}
+
+function moveTo(c: Conn, x: number, y: number) {
+  c.p.x = x; c.p.y = y; c.p.moving = false;
+  c.lastMoveAt = Date.now();
+  c.dirty = true;
+  c.socket?.emit('correct', { x, y, teleport: true });
+  const z = zoneKeyAt(x, y);
+  if (z !== c.p.zone) onZoneChange(c, z);
+}
+
+function clearBubble(id: string) {
+  const b = bubbles.get(id);
+  bubbles.delete(id);
+  for (const uid of b ?? []) { const o = conns.get(uid); if (o && o.p.bubble === id) { o.p.bubble = null; broadcastUpdate(o, ['bubble']); } }
+}
+function leaveBubble(c: Conn) {
+  const id = c.p.bubble;
+  if (!id) return;
+  c.p.bubble = null;
+  broadcastUpdate(c, ['bubble']);
+  const b = bubbles.get(id);
+  if (!b) return;
+  b.delete(c.uid);
+  if (b.size < 2) clearBubble(id);
+}
+
+async function setLayout(l: Layout, by: string) {
+  applyLayout(l);
+  await setSetting('layout', l);
+  await ensureRooms();
+  await loadDesks();
+  io.to('all').emit('layout', { layout: exportLayout(), by });
+  io.to('all').emit('rooms', [...rooms.values()]);
+  io.to('all').emit('desks', desks);
+  // anyone now standing inside a wall or object is moved somewhere free
+  for (const c of conns.values()) {
+    if (!isSolid(tileOf(c.p.x), tileOf(c.p.y))) { const z = zoneKeyAt(c.p.x, c.p.y); if (z !== c.p.zone) onZoneChange(c, z); continue; }
+    const sp = spawnPoint();
+    moveTo(c, sp.x, sp.y);
+  }
 }
 
 // ------------------------------------------------------------------ chat helpers
@@ -146,7 +223,7 @@ async function onConnect(socket: Socket) {
   joinChannels(conn);
 
   socket.emit('init', {
-    selfId: uid, players: playerList(), rooms: [...rooms.values()], settings, desks,
+    selfId: uid, players: playerList(), rooms: [...rooms.values()], settings, desks, layout: exportLayout(),
   });
   if (fresh) socket.broadcast.to('all').emit('player:join', conn.p);
   await db.query('UPDATE users SET last_seen=now() WHERE id=$1', [uid]);
@@ -254,6 +331,105 @@ async function onConnect(socket: Socket) {
     socket.emit('toast', { kind: 'ok', text: `You waved at ${target.p.name} 👋` });
   });
 
+  // ---- emotes, raised hand, custom status
+  socket.on('emote', (e: string) => {
+    if (!EMOTES.some((x) => x.id === e)) return;
+    if (e === 'hand') { conn.p.hand = !conn.p.hand; broadcastUpdate(conn, ['hand']); return; }
+    if (rateLimited('emote:' + uid, 12, 6_000)) return;
+    io.to('all').emit('emote', { id: uid, e });
+  });
+  socket.on('status:text', async (t: string) => {
+    conn.p.statusText = String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    broadcastUpdate(conn, ['statusText']);
+    await db.query('UPDATE users SET status_text=$2 WHERE id=$1', [uid, conn.p.statusText]);
+  });
+
+  // ---- teleport / ring / invite / knock
+  socket.on('teleport', (m: { to: string }) => {
+    const target = conns.get(m?.to);
+    if (!target || target.uid === uid) return;
+    if (rateLimited('tp:' + uid, 10, 30_000)) return;
+    if (target.p.status === 'dnd' && conn.p.role !== 'admin') return socket.emit('toast', { kind: 'warn', text: `${target.p.name} is on Do Not Disturb. Try ringing them instead.` });
+    if (target.p.bubble && target.p.bubble !== conn.p.bubble) return socket.emit('toast', { kind: 'warn', text: `${target.p.name} is in a locked conversation.` });
+    teleportNear(conn, target);
+  });
+  socket.on('request', (m: { to: string; kind: RequestKind }) => {
+    const target = conns.get(m?.to);
+    if (!target?.socket || target.uid === uid || !['ring', 'invite'].includes(m.kind)) return;
+    if (rateLimited('req:' + uid, 6, 30_000)) return socket.emit('toast', { kind: 'warn', text: 'Give them a moment to answer.' });
+    if (target.p.status === 'dnd') return socket.emit('toast', { kind: 'warn', text: `${target.p.name} is on Do Not Disturb.` });
+    const id = String(reqSeq++);
+    requests.set(id, { id, from: uid, to: target.uid, kind: m.kind, expires: Date.now() + 60_000 });
+    target.socket.emit('request', { id, from: uid, fromName: conn.p.name, kind: m.kind });
+    socket.emit('toast', { kind: 'ok', text: m.kind === 'ring' ? `Ringing ${target.p.name}…` : `Invited ${target.p.name} to join you.` });
+  });
+  socket.on('request:answer', (m: { id: string; accept: boolean }) => {
+    const r = requests.get(m?.id);
+    if (!r || r.expires < Date.now()) return socket.emit('toast', { kind: 'warn', text: 'That request has expired.' });
+    if (r.kind === 'knock' ? roomIdOfZone(conn.p.zone) !== r.roomId : r.to !== uid) return;
+    requests.delete(r.id);
+    if (r.kind === 'knock') for (const o of conns.values()) if (o.uid !== uid && roomIdOfZone(o.p.zone) === r.roomId) o.socket?.emit('request:closed', r.id);
+    const from = conns.get(r.from);
+    if (!from) return;
+    if (!m.accept) { from.socket?.emit('toast', { kind: 'info', text: `${conn.p.name} can't right now.` }); return; }
+    if (r.kind === 'invite') teleportNear(conn, from);
+    else teleportNear(from, conn, r.kind === 'knock');
+  });
+  socket.on('room:knock', (m: { roomId: string }) => {
+    const room = rooms.get(m?.roomId);
+    if (!room) return;
+    const inside = [...conns.values()].filter((o) => o.socket && roomIdOfZone(o.p.zone) === room.id);
+    if (!inside.length) return socket.emit('toast', { kind: 'info', text: 'Nobody is inside.' });
+    if (rateLimited('knock:' + uid, 4, 30_000)) return socket.emit('toast', { kind: 'warn', text: 'You knocked. Give them a moment.' });
+    const id = String(reqSeq++);
+    requests.set(id, { id, from: uid, to: '', kind: 'knock', roomId: room.id, expires: Date.now() + 60_000 });
+    for (const o of inside) o.socket!.emit('request', { id, from: uid, fromName: conn.p.name, kind: 'knock', roomName: zoneById(room.id)?.name });
+    socket.emit('toast', { kind: 'ok', text: `You knocked on ${zoneById(room.id)?.name}. 🚪` });
+  });
+
+  // ---- nearby chat (not saved, like Gather's "Nearby" chat)
+  socket.on('chat:nearby', (m: { body: string }) => {
+    const body = String(m?.body ?? '').trim().slice(0, 1000);
+    if (!body || rateLimited('chat:' + uid, 20, 10_000)) return;
+    const msg: ChatMessage = { id: -(Date.now() * 100 + Math.floor(Math.random() * 100)), channel: 'nearby', senderId: uid, senderName: conn.p.name, body, createdAt: new Date().toISOString(), reactions: {} };
+    const ids = new Set([uid, ...[...conn.peers].filter(([, mode]) => mode === 'proximity' || mode === 'room').map(([id]) => id)]);
+    const room = roomIdOfZone(conn.p.zone);
+    for (const o of conns.values()) if (room ? roomIdOfZone(o.p.zone) === room : !roomIdOfZone(o.p.zone) && tileDistance(o.p, conn.p) <= settings.proximity.connectRadius + 1) ids.add(o.uid);
+    for (const id of ids) io.to('user:' + id).emit('chat:message', msg);
+  });
+
+  // ---- lock a conversation in an open area so others can't join
+  socket.on('convo:lock', (locked: boolean) => {
+    if (!locked) { if (conn.p.bubble) clearBubble(conn.p.bubble); return; }
+    if (roomIdOfZone(conn.p.zone)) return socket.emit('toast', { kind: 'warn', text: 'Meeting rooms have their own lock.' });
+    const members = [...conn.peers].filter(([, mode]) => mode === 'proximity').map(([id]) => conns.get(id)!).filter(Boolean);
+    if (!members.length) return socket.emit('toast', { kind: 'warn', text: 'Walk up to someone first.' });
+    for (const o of [conn, ...members]) leaveBubble(o);
+    const id = 'b' + reqSeq++;
+    bubbles.set(id, new Set([conn.uid, ...members.map((o) => o.uid)]));
+    for (const o of [conn, ...members]) { o.p.bubble = id; broadcastUpdate(o, ['bubble']); o.socket?.emit('toast', { kind: 'info', text: `🔒 ${conn.p.name} locked this conversation. Others nearby can't join.` }); }
+  });
+
+  // ---- spotlight: broadcast to the whole office (managers and admins)
+  socket.on('spotlight', (on: boolean) => {
+    if (conn.p.role === 'member') return socket.emit('toast', { kind: 'warn', text: 'Only managers and admins can broadcast to the office.' });
+    conn.p.spotlight = !!on;
+    broadcastUpdate(conn, ['spotlight']);
+  });
+
+  // ---- admin build mode
+  socket.on('layout:save', async (m: { layout: unknown; reset?: boolean }, ack?: (r: any) => void) => {
+    if (conn.p.role !== 'admin') return ack?.({ ok: false, error: 'Only admins can change the office layout.' });
+    try {
+      const l = m?.reset ? DEFAULT_LAYOUT : validateLayout(m?.layout);
+      if (!l.zones.length) throw new Error('Keep at least one area.');
+      await setLayout(l, conn.p.name);
+      ack?.({ ok: true });
+    } catch (e) { ack?.({ ok: false, error: (e as Error).message }); }
+  });
+
+  registerObjects(io, socket, { uid, name: () => conn.p.name, pos: () => conn.p });
+
   socket.on('room:lock', (m: { roomId: string; locked: boolean }) => {
     const room = rooms.get(m?.roomId);
     if (!room) return;
@@ -294,6 +470,7 @@ async function removePlayer(uid: string) {
   const c = conns.get(uid);
   if (!c) return;
   if (c.goneTimer) clearTimeout(c.goneTimer);
+  leaveBubble(c);
   conns.delete(uid);
   io.to('all').emit('player:leave', uid);
   await db.query('UPDATE users SET last_x=$2, last_y=$3, last_seen=now() WHERE id=$1', [uid, c.p.x, c.p.y]).catch(() => {});
@@ -303,6 +480,7 @@ function onZoneChange(c: Conn, zone: string | null) {
   const wasRoom = roomIdOfZone(c.p.zone);
   const isRoom = roomIdOfZone(zone);
   c.p.zone = zone;
+  if (isRoom) leaveBubble(c);
   const fields: (keyof PlayerState)[] = ['zone'];
   if (isRoom && !wasRoom && c.p.status === 'available') { c.p.status = 'meeting'; c.autoMeeting = true; fields.push('status'); }
   else if (!isRoom && wasRoom && c.autoMeeting) {
@@ -331,7 +509,9 @@ function proximityTick() {
   for (let i = 0; i < live.length; i++)
     for (let j = i + 1; j < live.length; j++) {
       const a = live[i], b = live[j];
-      const mode = evaluatePair(a.p, b.p, cfg, a.peers.has(b.uid));
+      let mode = evaluatePair(a.p, b.p, cfg, a.peers.has(b.uid));
+      // locked conversation: members only talk to each other; outsiders can't join
+      if (mode === 'proximity' && a.p.bubble !== b.p.bubble) mode = null;
       if (mode) cands.push({ a, b, mode, d: mode === 'room' ? -1 : tileDistance(a.p, b.p) });
     }
   // Room links first, then nearest proximity links, capped per player (mesh limit).
@@ -343,6 +523,25 @@ function proximityTick() {
     na.set(b.uid, mode);
     nb.set(a.uid, mode);
   }
+  // spotlight: one-way broadcast from a manager/admin to everyone not already talking with them
+  for (const s of live) {
+    if (!s.p.spotlight) continue;
+    const ns = next.get(s.uid)!;
+    let count = 0;
+    for (const l of live) {
+      if (l === s || ns.has(l.uid) || count >= MAX_AUDIENCE) continue;
+      ns.set(l.uid, 'audience');
+      next.get(l.uid)!.set(s.uid, 'spotlight');
+      count++;
+    }
+  }
+  // locked conversations: drop members who walked away from everyone else in it
+  for (const b of [...bubbles.values()]) {
+    for (const id of [...b]) {
+      const n = next.get(id);
+      if (n && ![...b].some((o) => o !== id && n.get(o) === 'proximity')) { const c = conns.get(id); if (c) leaveBubble(c); }
+    }
+  }
   for (const c of live) {
     const n = next.get(c.uid)!;
     const changed = n.size !== c.peers.size || [...n].some(([k, v]) => c.peers.get(k) !== v);
@@ -351,6 +550,7 @@ function proximityTick() {
   }
   // Locks clear themselves once a room empties.
   let roomsChanged = false;
+  for (const [id, r] of requests) if (r.expires < Date.now()) requests.delete(id);
   for (const r of rooms.values()) if (r.locked && occupancy(r.id) === 0) { r.locked = false; r.lockedBy = null; roomsChanged = true; }
   if (roomsChanged) io.to('all').emit('rooms', [...rooms.values()]);
 }
@@ -387,6 +587,7 @@ export const onlineIds = () => new Set([...conns.values()].filter((c) => c.socke
 export const onlineZones = () => Object.fromEntries([...conns.values()].map((c) => [c.uid, c.p.zone]));
 
 export async function shutdownSave() {
+  await flushObjects().catch(() => {});
   for (const c of conns.values())
     await db.query('UPDATE users SET last_x=$2, last_y=$3 WHERE id=$1', [c.uid, c.p.x, c.p.y]).catch(() => {});
 }

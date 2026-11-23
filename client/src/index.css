@@ -5,7 +5,8 @@
 html, body, #root { height: 100%; }
 body { @apply text-slate-100 antialiased; font-family: Inter, system-ui, 'Segoe UI', sans-serif; overflow: hidden; }
 .pixel { font-family: 'Press Start 2P', monospace; }
-.panel { @apply bg-brand-900/95 border border-white/10 backdrop-blur; }
+.panel { @apply bg-brand-900/95 border border-white/10 backdrop-blur; box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 10px 30px -12px rgba(0,0,0,.6); }
+.font-display { font-family: 'Pixelify Sans', Inter, sans-serif; }
 .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition disabled:opacity-50; }
 .btn-primary { @apply btn bg-accent-500 text-white hover:bg-accent-400; }
 .btn-ghost { @apply btn bg-white/5 text-slate-200 hover:bg-white/10; }

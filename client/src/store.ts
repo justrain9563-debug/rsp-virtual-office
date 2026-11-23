@@ -14,6 +14,19 @@ export interface RemotePeer {
   speaking: boolean;
 }
 
+export interface IncomingRequest { id: string; from: string; fromName: string; kind: 'ring' | 'invite' | 'knock'; roomName?: string }
+
+/** Admin build mode: which tool is active and its options. */
+export interface BuildState {
+  tool: 'object' | 'erase' | 'floor' | 'wall' | 'door' | 'area';
+  objType: string;
+  variant: number;
+  floor: string;
+  areaKind: 'open' | 'private';
+  areaWalls: boolean;
+  dirty: boolean;
+}
+
 export interface Toast { id: number; kind: 'ok' | 'warn' | 'info' | 'wave'; text: string; from?: string; ttl?: number }
 
 interface State {
@@ -51,6 +64,15 @@ interface State {
   locate: { id: string; t: number } | null;
   walkTo: { id: string; t: number } | null;
   hint: string | null;
+  card: { id: string; x: number; y: number } | null;
+  openObject: string | null;
+  follow: string | null;
+  minimap: boolean;
+  requests: IncomingRequest[];
+  walkTile: { x: number; y: number; t: number } | null;
+  build: BuildState | null;
+  /** bumps when the office layout changes (map redraw) */
+  layoutVersion: number;
 
   set: (p: Partial<State>) => void;
   patchPlayer: (p: Partial<PlayerState> & { id: string }) => void;
@@ -92,6 +114,14 @@ export const useStore = create<State>((set, get) => ({
   locate: null,
   walkTo: null,
   hint: null,
+  card: null,
+  openObject: null,
+  follow: null,
+  minimap: (() => { try { return localStorage.getItem('rsp.minimap') !== '0'; } catch { return true; } })(),
+  requests: [],
+  walkTile: null,
+  build: null,
+  layoutVersion: 0,
 
   set: (p) => set(p),
   patchPlayer: (p) =>

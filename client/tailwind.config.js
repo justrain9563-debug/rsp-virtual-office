@@ -10,6 +10,7 @@ export default {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'Segoe UI', 'sans-serif'],
         pixel: ['"Press Start 2P"', 'monospace'],
+        display: ['"Pixelify Sans"', 'Inter', 'sans-serif'],
       },
     },
   },
